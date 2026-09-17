@@ -1,6 +1,7 @@
 enum TransactionType {
   income,
   expense,
+  transfer,
 }
 
 enum TimeFilter {
@@ -69,6 +70,8 @@ class TransactionRecord {
   final double amount;
   final TransactionType type;
   final DateTime date;
+  final String walletId;
+  final String? destinationWalletId;
 
   const TransactionRecord({
     required this.id,
@@ -76,5 +79,7 @@ class TransactionRecord {
     required this.amount,
     required this.type,
     required this.date,
+    this.walletId = 'default',
+    this.destinationWalletId,
   });
 }

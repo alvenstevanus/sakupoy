@@ -1,19 +1,164 @@
 import 'package:flutter/foundation.dart';
 import '../models/transaction.dart';
+import '../models/wallet.dart';
 
 class TransactionService extends ChangeNotifier {
   final List<TransactionRecord> _transactions = [];
+  final List<Wallet> _wallets = [];
 
+  static const String defaultWalletId = 'wallet_cash';
+
+  TransactionService({List<Wallet>? initialWallets}) {
+    if (initialWallets != null && initialWallets.isNotEmpty) {
+      _wallets.addAll(initialWallets);
+    } else {
+      _initializeDefaultWallets();
+    }
+  }
+
+  void _initializeDefaultWallets() {
+    if (_wallets.isEmpty) {
+      _wallets.addAll([
+        Wallet(
+          id: 'wallet_cash',
+          name: 'Tunai / Cash',
+          createdAt: DateTime.now(),
+        ),
+        Wallet(
+          id: 'wallet_brimo',
+          name: 'BRImo',
+          createdAt: DateTime.now(),
+        ),
+        Wallet(
+          id: 'wallet_dana',
+          name: 'DANA',
+          createdAt: DateTime.now(),
+        ),
+      ]);
+    }
+  }
+
+  /// Seluruh transaksi (read-only)
   List<TransactionRecord> get transactions => List.unmodifiable(_transactions);
 
-  /// Menghitung total semua uang masuk (pemasukan)
+  /// Daftar semua dompet termasuk yang sudah dihapus/arsip (read-only)
+  List<Wallet> get allWallets => List.unmodifiable(_wallets);
+
+  /// Daftar dompet yang masih aktif digunakan untuk transaksi (read-only)
+  List<Wallet> get activeWallets =>
+      List.unmodifiable(_wallets.where((w) => !w.isDeleted));
+
+  /// Mengambil data dompet berdasarkan ID
+  Wallet? getWalletById(String id) {
+    try {
+      return _wallets.firstWhere((w) => w.id == id);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Membuat dompet baru dengan opsi saldo awal
+  Wallet createWallet(String name, {double initialBalance = 0.0}) {
+    final trimmedName = name.trim();
+    if (trimmedName.isEmpty) {
+      throw ArgumentError('Nama dompet tidak boleh kosong');
+    }
+
+    final id =
+        'wallet_${DateTime.now().microsecondsSinceEpoch}_${_wallets.length + 1}';
+    final newWallet = Wallet(
+      id: id,
+      name: trimmedName,
+      createdAt: DateTime.now(),
+    );
+    _wallets.add(newWallet);
+
+    if (initialBalance > 0) {
+      addIncome(
+        initialBalance,
+        walletId: id,
+        title: 'Saldo Awal $trimmedName',
+      );
+    } else {
+      notifyListeners();
+    }
+
+    return newWallet;
+  }
+
+  /// Mengatur dompet awal dan uang bawaan saat pertama kali setup aplikasi.
+  /// Hanya dompet yang diinput di awal yang menjadi dompet aktif.
+  Wallet setupInitialWallet({
+    required String walletName,
+    required double initialBalance,
+  }) {
+    final trimmedName = walletName.trim();
+    _wallets.clear();
+    _transactions.clear();
+
+    final targetWallet = Wallet(
+      id: 'wallet_${DateTime.now().microsecondsSinceEpoch}',
+      name: trimmedName,
+      createdAt: DateTime.now(),
+    );
+    _wallets.add(targetWallet);
+
+    if (initialBalance > 0) {
+      addIncome(
+        initialBalance,
+        walletId: targetWallet.id,
+        title: 'Saldo Awal - $trimmedName',
+      );
+    } else {
+      notifyListeners();
+    }
+
+    return targetWallet;
+  }
+
+  /// Soft delete dompet (transaksi lampau tetap ada, tetapi tidak muncul lagi di pilihan baru)
+  void deleteWallet(String walletId) {
+    final index = _wallets.indexWhere((w) => w.id == walletId);
+    if (index != -1) {
+      _wallets[index] = _wallets[index].copyWith(isDeleted: true);
+      notifyListeners();
+    }
+  }
+
+  /// Menghitung saldo untuk dompet tertentu
+  double getWalletBalance(String walletId) {
+    double balance = 0.0;
+    for (final t in _transactions) {
+      if (t.walletId == walletId) {
+        if (t.type == TransactionType.income) {
+          balance += t.amount;
+        } else if (t.type == TransactionType.expense) {
+          balance -= t.amount;
+        } else if (t.type == TransactionType.transfer) {
+          balance -= t.amount; // Saldo keluar dari dompet asal
+        }
+      }
+      if (t.type == TransactionType.transfer &&
+          t.destinationWalletId == walletId) {
+        balance += t.amount; // Saldo masuk ke dompet tujuan
+      }
+    }
+    return balance;
+  }
+
+  /// Cek apakah saldo dompet kurang dari nominal pengeluaran/transfer
+  bool isBalanceInsufficient(String walletId, double amount) {
+    return getWalletBalance(walletId) < amount;
+  }
+
+  /// Menghitung total semua uang masuk (pemasukan riil)
   double get totalIncome {
     return _transactions
         .where((t) => t.type == TransactionType.income)
         .fold(0.0, (sum, t) => sum + t.amount);
   }
 
-  /// Menghitung total semua uang keluar (pengeluaran)
+  /// Menghitung total semua uang keluar (pengeluaran riil)
   double get totalExpense {
     return _transactions
         .where((t) => t.type == TransactionType.expense)
@@ -24,23 +169,71 @@ class TransactionService extends ChangeNotifier {
   double get totalBalance => totalIncome - totalExpense;
 
   /// Tambah uang (Pemasukan)
-  void addIncome(double amount, {String? title, DateTime? date}) {
+  void addIncome(
+    double amount, {
+    String? walletId,
+    String? title,
+    DateTime? date,
+  }) {
     if (amount <= 0) return;
+    final targetWalletId = walletId ??
+        (activeWallets.isNotEmpty ? activeWallets.first.id : defaultWalletId);
+
     _add(
       amount: amount,
-      title: (title == null || title.trim().isEmpty) ? 'Pemasukan' : title.trim(),
+      title:
+          (title == null || title.trim().isEmpty) ? 'Pemasukan' : title.trim(),
       type: TransactionType.income,
+      walletId: targetWalletId,
       date: date,
     );
   }
 
   /// Kurang uang (Pengeluaran)
-  void addExpense(double amount, {String? title, DateTime? date}) {
+  void addExpense(
+    double amount, {
+    String? walletId,
+    String? title,
+    DateTime? date,
+  }) {
     if (amount <= 0) return;
+    final targetWalletId = walletId ??
+        (activeWallets.isNotEmpty ? activeWallets.first.id : defaultWalletId);
+
     _add(
       amount: amount,
-      title: (title == null || title.trim().isEmpty) ? 'Pengeluaran' : title.trim(),
+      title: (title == null || title.trim().isEmpty)
+          ? 'Pengeluaran'
+          : title.trim(),
       type: TransactionType.expense,
+      walletId: targetWalletId,
+      date: date,
+    );
+  }
+
+  /// Pindah saldo antar dompet
+  void transferBalance({
+    required String fromWalletId,
+    required String toWalletId,
+    required double amount,
+    String? title,
+    DateTime? date,
+  }) {
+    if (amount <= 0) return;
+    if (fromWalletId == toWalletId) return;
+
+    final fromWallet = getWalletById(fromWalletId);
+    final toWallet = getWalletById(toWalletId);
+    final defaultTitle =
+        'Transfer: ${fromWallet?.name ?? fromWalletId} -> ${toWallet?.name ?? toWalletId}';
+
+    _add(
+      amount: amount,
+      title:
+          (title == null || title.trim().isEmpty) ? defaultTitle : title.trim(),
+      type: TransactionType.transfer,
+      walletId: fromWalletId,
+      destinationWalletId: toWalletId,
       date: date,
     );
   }
@@ -51,6 +244,8 @@ class TransactionService extends ChangeNotifier {
     required double amount,
     required String title,
     required TransactionType type,
+    required String walletId,
+    String? destinationWalletId,
     DateTime? date,
   }) {
     _idCounter++;
@@ -59,6 +254,8 @@ class TransactionService extends ChangeNotifier {
       title: title,
       amount: amount,
       type: type,
+      walletId: walletId,
+      destinationWalletId: destinationWalletId,
       date: date ?? DateTime.now(),
     );
 
@@ -67,8 +264,21 @@ class TransactionService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Mengambil riwayat transaksi untuk dompet tertentu
+  List<TransactionRecord> getTransactionsByWallet(String walletId) {
+    return _transactions
+        .where((t) =>
+            t.walletId == walletId ||
+            (t.type == TransactionType.transfer &&
+                t.destinationWalletId == walletId))
+        .toList();
+  }
+
   /// Mengambil transaksi berdasarkan filter waktu (3 hari, 7 hari, 30 hari, atau semua)
-  List<TransactionRecord> getFilteredTransactions(TimeFilter filter, {DateTime? customNow}) {
+  List<TransactionRecord> getFilteredTransactions(
+    TimeFilter filter, {
+    DateTime? customNow,
+  }) {
     if (filter == TimeFilter.all) {
       return transactions;
     }
@@ -89,7 +299,6 @@ class TransactionService extends ChangeNotifier {
         return transactions;
     }
 
-    // Cutoff waktu dihitung dari awal hari (00:00:00) X hari yang lalu
     final startOfCurrentDay = DateTime(now.year, now.month, now.day);
     final cutoff = startOfCurrentDay.subtract(Duration(days: days - 1));
 
@@ -98,16 +307,14 @@ class TransactionService extends ChangeNotifier {
     }).toList();
   }
 
-  /// Mengambil transaksi berdasarkan bulan dan tahun tertentu (contoh: September 2026, Agustus 2026)
+  /// Mengambil transaksi berdasarkan bulan dan tahun tertentu
   List<TransactionRecord> getTransactionsByMonth(MonthYear monthYear) {
     return _transactions.where((t) {
       return t.date.year == monthYear.year && t.date.month == monthYear.month;
     }).toList();
   }
 
-  /// Mengambil daftar bulan yang tersedia, mulai dari bulan saat ini mundur sampai bulan transaksi pertama.
-  /// Contoh: jika transaksi pertama di bulan Juni 2026 dan bulan ini September 2026,
-  /// maka bulan paling lama yang bisa diakses adalah Juni 2026.
+  /// Mengambil daftar bulan yang tersedia
   List<MonthYear> getAvailableMonths({DateTime? customNow}) {
     final now = customNow ?? DateTime.now();
     final currentMonth = MonthYear(now.year, now.month);
@@ -148,8 +355,12 @@ class TransactionService extends ChangeNotifier {
   }
 
   /// Kosongkan semua data transaksi
-  void clearAll() {
+  void clearAll({bool resetWallets = false}) {
     _transactions.clear();
+    if (resetWallets) {
+      _wallets.clear();
+      _initializeDefaultWallets();
+    }
     notifyListeners();
   }
 }

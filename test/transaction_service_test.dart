@@ -172,5 +172,154 @@ void main() {
       final augustList = service.getTransactionsByMonth(const MonthYear(2026, 8));
       expect(augustList, isEmpty);
     });
+
+    group('Multi-Wallet / Sumber Dana Tests', () {
+      test('Inisialisasi awal menyediakan dompet bawaan (Cash, BRImo, DANA)', () {
+        expect(service.activeWallets.length, 3);
+        final walletNames = service.activeWallets.map((w) => w.name).toList();
+        expect(walletNames, containsAll(['Tunai / Cash', 'BRImo', 'DANA']));
+      });
+
+      test('createWallet tanpa saldo awal menghasilkan saldo Rp 0', () {
+        final wallet = service.createWallet('Bank BCA');
+        expect(wallet.name, 'Bank BCA');
+        expect(service.getWalletBalance(wallet.id), 0.0);
+        expect(service.activeWallets.any((w) => w.id == wallet.id), isTrue);
+      });
+
+      test('createWallet dengan saldo awal otomatis mencatat transaksi pemasukan awal', () {
+        final wallet = service.createWallet('Bank Mandiri', initialBalance: 150000);
+        expect(service.getWalletBalance(wallet.id), 150000.0);
+        expect(service.totalBalance, 150000.0);
+        expect(service.totalIncome, 150000.0);
+        expect(service.transactions.first.walletId, wallet.id);
+        expect(service.transactions.first.title, contains('Saldo Awal'));
+      });
+
+      test('Pemasukan dan Pengeluaran tercatat akurat per dompet', () {
+        final cash = service.activeWallets.firstWhere((w) => w.name.contains('Cash'));
+        final brimo = service.activeWallets.firstWhere((w) => w.name == 'BRImo');
+
+        service.addIncome(200000, walletId: cash.id, title: 'Tarik Tunai Teman');
+        service.addIncome(500000, walletId: brimo.id, title: 'Gaji Pokok');
+
+        expect(service.getWalletBalance(cash.id), 200000.0);
+        expect(service.getWalletBalance(brimo.id), 500000.0);
+        expect(service.totalBalance, 700000.0);
+
+        service.addExpense(50000, walletId: cash.id, title: 'Beli Makan');
+        expect(service.getWalletBalance(cash.id), 150000.0);
+        expect(service.getWalletBalance(brimo.id), 500000.0);
+        expect(service.totalBalance, 650000.0);
+      });
+
+      test('Transfer antar dompet memindahkan saldo tanpa mengubah Total Saldo Keseluruhan', () {
+        final cash = service.activeWallets.firstWhere((w) => w.name.contains('Cash'));
+        final brimo = service.activeWallets.firstWhere((w) => w.name == 'BRImo');
+
+        // Isi saldo awal di BRImo sebesar 300.000
+        service.addIncome(300000, walletId: brimo.id, title: 'Transfer Masuk');
+
+        expect(service.getWalletBalance(brimo.id), 300000.0);
+        expect(service.getWalletBalance(cash.id), 0.0);
+        expect(service.totalBalance, 300000.0);
+
+        // Tarik tunai / transfer dari BRImo ke Cash sebesar 100.000
+        service.transferBalance(
+          fromWalletId: brimo.id,
+          toWalletId: cash.id,
+          amount: 100000,
+          title: 'Tarik Tunai ATM',
+        );
+
+        // Verifikasi saldo masing-masing dompet
+        expect(service.getWalletBalance(brimo.id), 200000.0);
+        expect(service.getWalletBalance(cash.id), 100000.0);
+
+        // Total Saldo, Total Income, dan Total Expense tetap utuh (transfer bukan belanja/gaji)
+        expect(service.totalBalance, 300000.0);
+        expect(service.totalIncome, 300000.0);
+        expect(service.totalExpense, 0.0);
+      });
+
+      test('Validasi isBalanceInsufficient mendeteksi jika saldo tidak mencukupi', () {
+        final cash = service.activeWallets.firstWhere((w) => w.name.contains('Cash'));
+        service.addIncome(50000, walletId: cash.id);
+
+        expect(service.isBalanceInsufficient(cash.id, 30000), isFalse);
+        expect(service.isBalanceInsufficient(cash.id, 50000), isFalse);
+        expect(service.isBalanceInsufficient(cash.id, 60000), isTrue);
+      });
+
+      test('Saldo dompet dapat bernilai minus jika pengeluaran melebihi saldo', () {
+        final dana = service.activeWallets.firstWhere((w) => w.name == 'DANA');
+        service.addIncome(20000, walletId: dana.id);
+        service.addExpense(50000, walletId: dana.id, title: 'Langganan Musik');
+
+        expect(service.getWalletBalance(dana.id), -30000.0);
+        expect(service.totalBalance, -30000.0);
+      });
+
+      test('Soft delete dompet mempertahankan riwayat transaksi namun hilang dari activeWallets', () {
+        final wallet = service.createWallet('Dompet Cadangan', initialBalance: 100000);
+        final walletId = wallet.id;
+
+        expect(service.activeWallets.any((w) => w.id == walletId), isTrue);
+
+        service.deleteWallet(walletId);
+
+        // Hilang dari activeWallets
+        expect(service.activeWallets.any((w) => w.id == walletId), isFalse);
+        // Tetap ada di allWallets
+        expect(service.allWallets.any((w) => w.id == walletId), isTrue);
+        expect(service.getWalletById(walletId)?.isDeleted, isTrue);
+
+        // Riwayat transaksi tetap ada dan saldo tetap terhitung
+        expect(service.getTransactionsByWallet(walletId).length, 1);
+        expect(service.totalBalance, 100000.0);
+      });
+
+      test('setupInitialWallet hanya menyisakan dompet yang diinput di awal sebagai dompet aktif', () {
+        // Awalnya ada 3 dompet default
+        expect(service.activeWallets.length, 3);
+
+        // User setup dompet awal (misal: 'BCA' dengan saldo Rp 1.500.000)
+        final initialWallet = service.setupInitialWallet(
+          walletName: 'BCA',
+          initialBalance: 1500000,
+        );
+
+        // Hanya dompet yang diinput di awal yang aktif
+        expect(service.activeWallets.length, 1);
+        expect(service.activeWallets.first.id, initialWallet.id);
+        expect(service.activeWallets.first.name, 'BCA');
+        expect(service.getWalletBalance(initialWallet.id), 1500000.0);
+        expect(service.totalBalance, 1500000.0);
+
+        // Dompet bawaan lain (Cash, BRImo, DANA) tidak ada lagi
+        expect(service.activeWallets.any((w) => w.name == 'Tunai / Cash'), isFalse);
+        expect(service.activeWallets.any((w) => w.name == 'BRImo'), isFalse);
+        expect(service.activeWallets.any((w) => w.name == 'DANA'), isFalse);
+      });
+
+      test('setupInitialWallet dengan preset bawaan hanya mengaktifkan preset tersebut', () {
+        // User memilih preset bawaan 'BRImo' dengan saldo Rp 500.000
+        final initialWallet = service.setupInitialWallet(
+          walletName: 'BRImo',
+          initialBalance: 500000,
+        );
+
+        // Hanya BRImo yang aktif
+        expect(service.activeWallets.length, 1);
+        expect(service.activeWallets.first.id, initialWallet.id);
+        expect(service.activeWallets.first.name, 'BRImo');
+        expect(service.getWalletBalance(initialWallet.id), 500000.0);
+        expect(service.totalBalance, 500000.0);
+
+        // Preset bawaan lain (Cash & DANA) tidak ikut aktif
+        expect(service.activeWallets.any((w) => w.name == 'Tunai / Cash'), isFalse);
+        expect(service.activeWallets.any((w) => w.name == 'DANA'), isFalse);
+      });
+    });
   });
 }
