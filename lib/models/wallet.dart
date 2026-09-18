@@ -38,6 +38,24 @@ class Wallet {
     );
   }
 
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'name': name,
+      'isDeleted': isDeleted ? 1 : 0,
+      'createdAt': createdAt.toIso8601String(),
+    };
+  }
+
+  factory Wallet.fromMap(Map<dynamic, dynamic> map) {
+    return Wallet(
+      id: map['id'] as String,
+      name: map['name'] as String,
+      isDeleted: (map['isDeleted'] as int) == 1,
+      createdAt: DateTime.parse(map['createdAt'] as String),
+    );
+  }
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||

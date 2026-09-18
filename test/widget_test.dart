@@ -73,6 +73,10 @@ void main() {
       // 8. Verifikasi Total Saldo menjadi 50000 - 20000 = Rp 30.000
       expect(find.text('Rp 30.000'), findsWidgets);
 
+      // Pindah ke Tab Riwayat
+      await tester.tap(find.byKey(const Key('tab_history')));
+      await tester.pumpAndSettle();
+
       // 9. Verifikasi Dropdown Filter tersedia
       final dropdownFinder = find.byKey(const Key('dropdown_filter'));
       expect(dropdownFinder, findsOneWidget);
@@ -177,7 +181,11 @@ void main() {
     await tester.tap(find.text('Teruskan'));
     await tester.pumpAndSettle();
 
-    // 7. Verifikasi transaksi transfer tercatat
+    // 7. Pindah ke Tab Riwayat untuk melihat mutasi transfer
+    await tester.tap(find.byKey(const Key('tab_history')));
+    await tester.pumpAndSettle();
+
+    // Verifikasi transaksi transfer tercatat
     expect(find.byIcon(Icons.swap_horiz), findsWidgets);
   });
 
@@ -278,9 +286,13 @@ void main() {
     await tester.tap(find.text('Simpan Pemasukan'));
     await tester.pumpAndSettle();
 
+    // 2. Pindah ke Tab Riwayat untuk menguji hapus transaksi
+    await tester.tap(find.byKey(const Key('tab_history')));
+    await tester.pumpAndSettle();
+
     expect(find.text('Gaji Tambahan'), findsOneWidget);
 
-    // 2. Tekan ikon hapus pada transaksi
+    // Tekan ikon hapus pada transaksi
     final deleteTxBtn = find.byIcon(Icons.delete_outline);
     await tester.tap(deleteTxBtn.first);
     await tester.pumpAndSettle();
@@ -306,7 +318,10 @@ void main() {
     // Transaksi berhasil terhapus
     expect(find.text('Gaji Tambahan'), findsNothing);
 
-    // 3. Uji hapus dompet dengan konfirmasi
+    // 3. Kembali ke Tab Beranda untuk menguji hapus dompet dengan konfirmasi
+    await tester.tap(find.byKey(const Key('tab_home')));
+    await tester.pumpAndSettle();
+
     // Buka menu titik tiga pada salah satu dompet
     final moreBtn = find.byIcon(Icons.more_vert).first;
     await tester.tap(moreBtn);

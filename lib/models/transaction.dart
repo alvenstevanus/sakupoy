@@ -82,4 +82,28 @@ class TransactionRecord {
     this.walletId = 'default',
     this.destinationWalletId,
   });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'title': title,
+      'amount': amount,
+      'type': type.index,
+      'date': date.toIso8601String(),
+      'walletId': walletId,
+      'destinationWalletId': destinationWalletId,
+    };
+  }
+
+  factory TransactionRecord.fromMap(Map<dynamic, dynamic> map) {
+    return TransactionRecord(
+      id: map['id'] as String,
+      title: map['title'] as String,
+      amount: (map['amount'] as num).toDouble(),
+      type: TransactionType.values[map['type'] as int],
+      date: DateTime.parse(map['date'] as String),
+      walletId: map['walletId'] as String,
+      destinationWalletId: map['destinationWalletId'] as String?,
+    );
+  }
 }

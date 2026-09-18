@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import '../models/transaction.dart';
 import '../models/wallet.dart';
 
@@ -6,8 +7,42 @@ class TransactionService extends ChangeNotifier {
   final List<TransactionRecord> _transactions = [];
   final List<Wallet> _wallets = [];
 
+  static const String _boxTransactions = 'transactions';
+  static const String _boxWallets = 'wallets';
+  static const String _keyTransactions = 'data';
+  static const String _keyWallets = 'data';
   static const String defaultWalletId = 'wallet_cash';
 
+  /// Buat instance baru dan muat data dari Hive.
+  /// Gunakan metode ini sebagai pengganti konstruktor biasa saat startup.
+  static Future<TransactionService> load() async {
+    final txBox = await Hive.openBox(_boxTransactions);
+    final walletBox = await Hive.openBox(_boxWallets);
+    return TransactionService._fromBoxes(txBox, walletBox);
+  }
+
+  TransactionService._fromBoxes(Box txBox, Box walletBox) {
+    // Muat dompet dari Hive
+    final rawWallets = walletBox.get(_keyWallets);
+    if (rawWallets != null && rawWallets is List && rawWallets.isNotEmpty) {
+      _wallets.addAll(
+        rawWallets.map((e) => Wallet.fromMap(e as Map)).toList(),
+      );
+    } else {
+      _initializeDefaultWallets();
+      _saveWallets(walletBox);
+    }
+
+    // Muat transaksi dari Hive
+    final rawTx = txBox.get(_keyTransactions);
+    if (rawTx != null && rawTx is List && rawTx.isNotEmpty) {
+      _transactions.addAll(
+        rawTx.map((e) => TransactionRecord.fromMap(e as Map)).toList(),
+      );
+    }
+  }
+
+  /// Konstruktor untuk testing (tanpa Hive)
   TransactionService({List<Wallet>? initialWallets}) {
     if (initialWallets != null && initialWallets.isNotEmpty) {
       _wallets.addAll(initialWallets);
@@ -38,6 +73,29 @@ class TransactionService extends ChangeNotifier {
     }
   }
 
+  // ── Helpers Hive ──────────────────────────────────────────────────────────
+
+  void _saveTransactions(Box box) {
+    box.put(_keyTransactions, _transactions.map((t) => t.toMap()).toList());
+  }
+
+  void _saveWallets(Box box) {
+    box.put(_keyWallets, _wallets.map((w) => w.toMap()).toList());
+  }
+
+  /// Simpan semua data ke Hive (panggil setelah setiap perubahan)
+  Future<void> _persist() async {
+    if (!Hive.isBoxOpen(_boxTransactions) || !Hive.isBoxOpen(_boxWallets)) {
+      return;
+    }
+    final txBox = Hive.box(_boxTransactions);
+    final walletBox = Hive.box(_boxWallets);
+    _saveTransactions(txBox);
+    _saveWallets(walletBox);
+  }
+
+  // ── Getters ───────────────────────────────────────────────────────────────
+
   /// Seluruh transaksi (read-only)
   List<TransactionRecord> get transactions => List.unmodifiable(_transactions);
 
@@ -56,6 +114,8 @@ class TransactionService extends ChangeNotifier {
       return null;
     }
   }
+
+  // ── Wallet Operations ─────────────────────────────────────────────────────
 
   /// Membuat dompet baru dengan opsi saldo awal
   Wallet createWallet(String name, {double initialBalance = 0.0}) {
@@ -80,6 +140,7 @@ class TransactionService extends ChangeNotifier {
         title: 'Saldo Awal $trimmedName',
       );
     } else {
+      _persist();
       notifyListeners();
     }
 
@@ -110,6 +171,7 @@ class TransactionService extends ChangeNotifier {
         title: 'Saldo Awal - $trimmedName',
       );
     } else {
+      _persist();
       notifyListeners();
     }
 
@@ -121,9 +183,12 @@ class TransactionService extends ChangeNotifier {
     final index = _wallets.indexWhere((w) => w.id == walletId);
     if (index != -1) {
       _wallets[index] = _wallets[index].copyWith(isDeleted: true);
+      _persist();
       notifyListeners();
     }
   }
+
+  // ── Balance ───────────────────────────────────────────────────────────────
 
   /// Menghitung saldo untuk dompet tertentu
   double getWalletBalance(String walletId) {
@@ -167,6 +232,8 @@ class TransactionService extends ChangeNotifier {
 
   /// Menghitung sisa total uang (pemasukan - pengeluaran)
   double get totalBalance => totalIncome - totalExpense;
+
+  // ── Transaction Operations ────────────────────────────────────────────────
 
   /// Tambah uang (Pemasukan)
   void addIncome(
@@ -261,8 +328,11 @@ class TransactionService extends ChangeNotifier {
 
     // Tambahkan di awal agar transaksi terbaru selalu berada di paling atas
     _transactions.insert(0, newTransaction);
+    _persist();
     notifyListeners();
   }
+
+  // ── Queries ───────────────────────────────────────────────────────────────
 
   /// Mengambil riwayat transaksi untuk dompet tertentu
   List<TransactionRecord> getTransactionsByWallet(String walletId) {
@@ -351,6 +421,7 @@ class TransactionService extends ChangeNotifier {
   /// Hapus transaksi berdasarkan ID
   void deleteTransaction(String id) {
     _transactions.removeWhere((t) => t.id == id);
+    _persist();
     notifyListeners();
   }
 
@@ -361,6 +432,7 @@ class TransactionService extends ChangeNotifier {
       _wallets.clear();
       _initializeDefaultWallets();
     }
+    _persist();
     notifyListeners();
   }
 }
